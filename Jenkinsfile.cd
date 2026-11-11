@@ -1,0 +1,90 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'WEB_IMAGE_REPO', defaultValue: '', description: 'Frontend Docker Hub repository from CI')
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Frontend CI build number')
+    }
+
+    environment {
+        DEPLOY_USER = 'ubuntu'
+        APP_DIR = '/home/ubuntu/apps/projectflow/frontend'
+        SSH_CREDENTIALS_ID = 'deploy-ssh-key'
+        KNOWN_HOSTS_CREDENTIALS_ID = 'ssh-known-hosts'
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        timeout(time: 15, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    if (!(params.IMAGE_TAG ==~ /^[0-9]+$/)) {
+                        error('IMAGE_TAG must be a numeric CI build number.')
+                    }
+                    if (env.BRANCH_NAME == 'develop') {
+                        env.DEPLOY_HOST = '16.178.138.2'
+                        if (params.WEB_IMAGE_REPO != 'aha706/projectflow-web-dev') {
+                            error('The develop branch requires the development image.')
+                        }
+                    } else if (env.BRANCH_NAME == 'main') {
+                        env.DEPLOY_HOST = '3.27.25.5'
+                        if (params.WEB_IMAGE_REPO != 'aha706/projectflow-web') {
+                            error('The main branch requires the production image.')
+                        }
+                    } else {
+                        error("Unsupported branch for CD: ${env.BRANCH_NAME}")
+                    }
+                    echo "Deploying ${params.WEB_IMAGE_REPO}:${params.IMAGE_TAG} to ${env.DEPLOY_HOST}"
+                }
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sshagent(credentials: [env.SSH_CREDENTIALS_ID]) {
+                    withCredentials([
+                        file(credentialsId: env.KNOWN_HOSTS_CREDENTIALS_ID, variable: 'KNOWN_HOSTS')
+                    ]) {
+                        sh '''
+                            set -eu
+                            SSH_OPTS="-o UserKnownHostsFile=${KNOWN_HOSTS} -o StrictHostKeyChecking=yes -o BatchMode=yes"
+                            ssh $SSH_OPTS "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "mkdir -p '${APP_DIR}' && docker network inspect proxy-network >/dev/null"
+                            rsync -az -e "ssh $SSH_OPTS" docker-compose.yml \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}:${APP_DIR}/docker-compose.yml"
+                            ssh $SSH_OPTS "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 export WEB_IMAGE_REPO='${WEB_IMAGE_REPO}' IMAGE_TAG='${IMAGE_TAG}' &&
+                                 docker compose config -q &&
+                                 docker compose pull &&
+                                 docker compose up -d --no-build --wait --wait-timeout 120 &&
+                                 docker compose exec -T web wget -q -O /dev/null http://projectflow-api:4000/health &&
+                                 docker compose ps"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Frontend CD succeeded: ${params.WEB_IMAGE_REPO}:${params.IMAGE_TAG}"
+        }
+        failure {
+            echo 'Frontend CD failed; check the Jenkins console output.'
+        }
+    }
+}

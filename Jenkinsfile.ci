@@ -1,0 +1,104 @@
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY = 'docker.io'
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                cleanWs()
+                checkout scm
+                script {
+                    if (env.BRANCH_NAME == 'develop') {
+                        env.WEB_IMAGE_REPO = 'aha706/projectflow-web-dev'
+                    } else if (env.BRANCH_NAME == 'main') {
+                        env.WEB_IMAGE_REPO = 'aha706/projectflow-web'
+                    } else {
+                        error("Unsupported branch for CI/CD: ${env.BRANCH_NAME}")
+                    }
+                    env.IMAGE = "${env.WEB_IMAGE_REPO}:${env.BUILD_NUMBER}"
+                    echo "Branch: ${env.BRANCH_NAME}, image: ${env.IMAGE}"
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm ci'
+            }
+        }
+
+        stage('Lint and Test') {
+            steps {
+                sh '''
+                    set -eu
+                    npm run lint
+                    npm test
+                '''
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                sh '''
+                    set -eu
+                    DOCKER_BUILDKIT=1 docker build --pull -t "$IMAGE" .
+                '''
+            }
+        }
+
+        stage('Trivy Scan') {
+            steps {
+                sh 'trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed "$IMAGE"'
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        export DOCKER_CONFIG="$(mktemp -d)"
+                        trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+                        printf '%s' "$DOCKER_PASSWORD" | docker login "$REGISTRY" \
+                            --username "$DOCKER_USERNAME" --password-stdin
+                        docker push "$IMAGE"
+                    '''
+                }
+            }
+        }
+
+        stage('Trigger CD') {
+            steps {
+                build job: "projectflow-fe-cd/${env.BRANCH_NAME}",
+                    parameters: [
+                        string(name: 'WEB_IMAGE_REPO', value: env.WEB_IMAGE_REPO),
+                        string(name: 'IMAGE_TAG', value: env.BUILD_NUMBER)
+                    ],
+                    wait: false
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo 'Frontend CI failed; check the Jenkins console output.'
+        }
+    }
+}

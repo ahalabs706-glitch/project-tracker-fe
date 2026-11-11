@@ -1,0 +1,20 @@
+services:
+  web:
+    image: ${WEB_IMAGE_REPO:?Set WEB_IMAGE_REPO}:${IMAGE_TAG:?Set IMAGE_TAG}
+    environment:
+      API_PROXY_TARGET: http://projectflow-api:4000
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      proxy-network:
+        aliases:
+          - projectflow-web
+
+networks:
+  proxy-network:
+    external: true
+    name: proxy-network
