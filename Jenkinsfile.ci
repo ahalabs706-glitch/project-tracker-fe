@@ -193,6 +193,7 @@ pipeline {
                     echo "Web Image: ${WEB_IMAGE}"
                     DOCKER_BUILDKIT=1 docker build \
                         --pull \
+                        --no-cache-filter runtime \
                         -t "${WEB_IMAGE}" \
                         .
 
