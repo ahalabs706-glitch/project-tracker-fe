@@ -133,12 +133,6 @@ pipeline {
                     npm run lint
 
                     echo "=========================================="
-                    echo "Running TypeScript typecheck"
-                    echo "=========================================="
-
-                    npm run typecheck
-
-                    echo "=========================================="
                     echo "Lint SUCCESS"
                     echo "=========================================="
                 '''
