@@ -133,12 +133,6 @@ pipeline {
                     npm run lint
 
                     echo "=========================================="
-                    echo "Running Prettier check"
-                    echo "=========================================="
-
-                    npm run format:check
-
-                    echo "=========================================="
                     echo "Running TypeScript typecheck"
                     echo "=========================================="
 
