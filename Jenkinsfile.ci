@@ -193,7 +193,6 @@ pipeline {
                     echo "Web Image: ${WEB_IMAGE}"
                     DOCKER_BUILDKIT=1 docker build \
                         --pull \
-                        -f apps/web/Dockerfile.kube \
                         -t "${WEB_IMAGE}" \
                         .
 
